@@ -1,0 +1,581 @@
+---
+title: 'Two-stage exams: Study 3'
+author: "George Kinnear"
+date: "20/06/2020"
+output:
+  pdf_document:
+    toc: true
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.path='rmd_figs_study3/',
+                      warning=FALSE, message=FALSE)
+
+library(tidyverse)
+library(ggthemes)
+library(ggpubr)
+library(gt)        # For formatting tables
+
+
+theme_set(
+  theme_pubr() +
+    theme(legend.position = "right")
+)
+heathers = c("#00b3c3","#e51c24","#016637","#fcb123")    #original green: #008a49
+
+```
+
+# Data
+
+Import the dataset.
+
+```{r data}
+data = read.csv('Study3_data.csv', header=T) %>%
+  dplyr::select(-c(X))
+
+
+S123data = subset(data,
+                  select=c('Q','Student','Stage1score','Stage2score','Stage3score')) %>%
+  filter(!is.na(Stage2score))
+```
+
+
+
+## Mean at each stage (as bars)
+```{r fig-means-bars}
+ld <- gather(data = S123data, 
+             key = stage, 
+             value = score, 
+             Stage1score, Stage2score, Stage3score)
+ld <- ld[complete.cases(ld),]
+
+plotData <- aggregate(ld$score,
+                      by = list(Q = ld$Q, Stage = ld$stage),
+                      FUN = function(x) c(mean = mean(x), sd = sd(x),
+                                          n = length(x)))
+plotData <- do.call(data.frame, plotData)
+plotData$se <- plotData$x.sd / sqrt(plotData$x.n)
+
+colnames(plotData) <- c("Q", "Stage", "mean", "sd", "n", "se")
+
+plotData = plotData %>%
+  mutate(
+    Stage = gsub(".*(\\d).*","\\1",Stage)  # alternatively: Stage = parse_number(Stage)
+  )
+plotCounts = plotData %>% group_by(Q,Stage) %>% select(Stage,n) %>%
+  mutate(scale_lab = paste0("Stage ",Stage, " (n=",n,")"))
+
+limits <- aes(ymax = plotData$mean + plotData$se,
+              ymin = plotData$mean - plotData$se)
+
+p <- ggplot(data = plotData, aes(x = factor(Q), y = mean,
+                                 fill = factor(Stage), label=n)) +
+  geom_bar(stat = "identity",
+             position = position_dodge(0.9))+
+  geom_text(position = position_dodge(width = 0.9),aes(y=-0.05),angle=90) +
+  geom_errorbar(limits, position = position_dodge(0.9),
+                width = 0.25)  +
+  labs(x = "Question",
+       y = "Percentage of students answering correctly",
+       fill = "Stage") +
+  scale_fill_manual(values=heathers, labels=paste0("Stage ",c(1:4))) + #plotCounts$scale_lab) +
+  #scale_fill_grey() +
+  scale_y_continuous(labels = scales::percent)
+p
+ggsave("Figs/Study3_S123_means.pdf",width=20,height=10,units="cm",dpi=300)
+```
+
+A look at the data (this only shows the first few rows, but for a sanity check the full table could be consulted):
+```{r data-peek}
+S123data %>%
+  group_by(Student) %>%
+  mutate(
+    Stage1sum = sum(Stage1score),
+    Stage2sum = sum(Stage2score),
+    Stage3sum = sum(Stage3score),
+    qs = str_length(paste0(Stage1score, collapse=""))
+  ) %>%
+  ungroup() %>%
+  mutate(
+    S1max = max(Stage1sum)
+  ) %>%
+  arrange(-qs) %>%
+  head() %>%
+  knitr::kable()
+```
+
+## Bar plot
+```{r fig-bars-expt}
+barPlotData = data %>%
+  dplyr::select(c('Q','Student','ZippGroup','Stage1score','Stage2score','Stage3score')) %>%
+  gather('Stage1score','Stage2score','Stage3score',key="Stage", value="Score") %>%
+  drop_na() %>%
+  mutate(
+    Stage=parse_number(Stage),
+    expt = case_when(
+      str_sub(ZippGroup,1,1)=="E" ~ "E",
+      TRUE ~ "C"
+    ),
+    bar = case_when(
+      Stage==1 & expt=="E" ~ "1E",
+      Stage==1 & expt=="C" ~ "1C",
+      Stage==2 ~ "2E",
+      Stage==3 & expt=="E" ~ "3E",
+      Stage==3 & expt=="C" ~ "3C"
+    )
+  ) %>%
+  group_by(Q,bar) %>%
+  summarise(
+    mean=mean(Score,na.rm=TRUE),
+    sd=sd(Score,na.rm=TRUE),
+    n=n(),
+    se=sd/sqrt(n)
+  ) %>%
+  ungroup() %>% 
+  mutate(
+    Q=paste0("Q",Q),
+    Stage=parse_number(bar),
+    Expt=str_sub(bar,2,2),
+    ConditionOrder = case_when(
+      bar=="1C" ~ 1,
+      bar=="1E" ~ 2,
+      bar=="2E" ~ 3,
+      bar=="3E" ~ 4,
+      bar=="3C" ~ 5
+    ),
+    bar2=fct_reorder(bar,ConditionOrder)
+  ) %>% arrange(Q,ConditionOrder)
+
+
+barLabels = c("Stage 1 (Control)", "Stage 1 (Experimental)",
+              "Stage 2 (Experimental)",
+              "Stage 3 (Experimental)", "Stage 3 (Control)")
+barColoursAlpha = c(alpha(heathers[1],.25),heathers[1],heathers[2],heathers[3],alpha(heathers[3],.25))
+barColoursAlpha = c("#bfecf0",heathers[1],heathers[2],heathers[3],"#bfd9cd")
+
+limits <- aes(ymax = barPlotData$mean + barPlotData$se,
+              ymin = barPlotData$mean - barPlotData$se)
+
+ggplot(data = barPlotData, aes(x = factor(Q), y = mean,
+                                    fill = factor(bar), label=n)) +
+  geom_bar(stat = "identity",
+           position = position_dodge(0.9),color="white")+
+  geom_text(position = position_dodge(width = 0.9),aes(y=-0.05),angle=90) +
+  geom_errorbar(limits, position = position_dodge(0.9),
+                width = 0.25)  +
+  labs(x = "Question",
+       y = "Percentage of students answering correctly",
+       fill = "Stage") +
+  scale_fill_manual(values=barColoursAlpha, labels=barLabels) +
+  scale_y_continuous(labels = scales::percent)
+ggsave("Figs/Study3_S123_means.pdf",width=20,height=10,units="cm",dpi=300)
+```
+
+
+## Mean at each stage (as points)
+```{r fig-expt-pts}
+
+ggplot(data=barPlotData,aes(x=bar2,y=mean,group=Q,label=n))+
+  geom_line()+
+  geom_errorbar(aes(ymax = barPlotData$mean + barPlotData$se,
+                    ymin = barPlotData$mean - barPlotData$se),
+                position = position_dodge(0.9),
+                width = 0.5)  +
+  geom_point(position = position_dodge(0.9),size=5,
+             aes(color=bar2))+
+  facet_grid(cols=vars(Q))+
+  labs(x = "Stage",
+       y = "Percentage of students answering correctly",
+       color = "Stage") +
+  scale_y_continuous(labels = scales::percent)+
+  scale_color_manual(values=barColoursAlpha, labels=barLabels)+
+  coord_cartesian(ylim=c(0,1),clip="off")+
+  geom_text(position = position_dodge(width = 0.9),
+            aes(y=0, label=paste0("",barPlotData$n)),
+            angle=90,
+            color="#777777") +
+  theme(strip.background = element_rect(fill=NA,colour = NA),
+        strip.text = element_text(size=12, face="bold"),
+        axis.text.x = element_text(angle=90))
+ggsave("Figs/Study3_S123_means_pts.pdf",width=20,height=10,units="cm",dpi=300)
+
+```
+
+## Mean at each stage (table, with standard errors)
+
+```{r tab-means}
+tab = barPlotData %>% 
+  mutate(
+    entry = paste0(sprintf("%2.0f", mean*100), " (", sprintf("%2.1f", se*100), ")")
+  ) %>%
+  group_by(Q,bar) %>%
+  select(Q,bar,entry) %>%
+  spread(Q,entry)
+
+tab$bar = barLabels
+tab %>% knitr::kable()
+```
+
+
+# Forming the Zipp tables
+
+This constructs the data in Table 5 of the paper. Note that this only has data for the experimental condition -- the data for the full Table 5 (i.e. including the control condition) appears in the final section of this script, where the experimental analysis takes place.
+
+## Table 5, first attempt
+```{r zip-tab-123}
+S123data = subset(data,select=c('Q','Student','Stage1score','Stage2score','Stage3score','ZippGroup'))
+S123data = S123data[complete.cases(S123data),]
+
+zipptab = S123data %>%
+  group_by(ZippGroup) %>%
+  summarize( numcorrect = sum(Stage3score),
+             numingroup = n()) %>%
+  mutate( pc = numcorrect/numingroup,
+          entry = paste0(sprintf("%2.1f", pc*100), " (", numcorrect, "/",numingroup,")"))
+zipptab %>% knitr::kable()
+```
+
+
+# Group dynamics: Stage 1 vs Stage 2
+
+Here we look at the relative performance in the groups across the first two stages.
+
+```{r group-correctness}
+
+groupCorrectness = data %>%
+  group_by(Stage2group,Q) %>%
+  summarise(
+    GpSize = n(),
+    S1sum = sum(Stage1score),
+    S1avg = S1sum/GpSize,
+    S2 = max(Stage2score),
+    S2pc = ceiling(max(Stage2scorePC)) ## round up so that it's 1 if they were correct on second attempt
+  ) %>%
+  filter(
+    !is.na(S2)
+  )
+groupCorrectness %>% ungroup() %>% knitr::kable()
+```
+
+```{r group-perfs}
+groupPerfS12 = groupCorrectness %>%
+  mutate(
+    tot_group = cut(S1sum,breaks=c(-Inf,0.5,1.5,2.5,Inf),labels=c("0","1","2","3 or more"))
+  ) %>%
+  group_by(tot_group) %>%
+  summarize(
+    S2avg = mean(S2),
+    S2se = sd(S2)/sqrt(n()),
+    S2n = n(),
+    S2Pavg = mean(S2pc),
+    S2Pse = sd(S2pc)/sqrt(n())
+  )
+groupPerfS12 %>% knitr::kable()
+```
+
+```{r group-perf-plot}
+
+ggplot(groupPerfS12,aes(x=tot_group,y=S2avg,label=S2n))+
+  geom_errorbar(aes(ymax = groupPerfS12$S2avg + groupPerfS12$S2se,
+                    ymin = groupPerfS12$S2avg - groupPerfS12$S2se),
+                position = position_dodge(0.9),
+                width = 0.1)+
+  geom_point(aes(colour="First attempt"),size=5)+
+  geom_errorbar(aes(ymax = groupPerfS12$S2Pavg + groupPerfS12$S2Pse,
+                    ymin = groupPerfS12$S2Pavg - groupPerfS12$S2Pse),
+                position = position_nudge(x=0.1),
+                width = 0.1)+
+  geom_point(aes(y=S2Pavg,colour="Second attempt"),position=position_nudge(x=0.1),size=5)+
+  scale_y_continuous(labels = scales::percent,breaks=seq(0,1,by=.2))+
+  scale_color_manual(values=heathers) +
+  coord_cartesian(ylim=c(0,1),clip="off")+
+  geom_text(position = position_dodge(width = 0.9),
+            aes(y=-0.01, label=paste0("n=",groupPerfS12$S2n)),
+            angle=0,
+            color="#777777")+
+  labs(x = "Number of students correct at stage 1",
+       y = "Groups answering correctly",
+       colour = "Stage 2 attempt") +
+  theme(strip.background = element_rect(fill=NA,colour = NA),
+        strip.text = element_text(size=12, face="bold"))
+ggsave("Figs/Study3_S12_collab.pdf",width=15,height=7,units="cm",dpi=300)
+
+```
+
+
+## Group dynamics
+
+This replicates the analysis of Levy et al. (2018), producing Fig 7 of the paper. There is extra detail here, with the various measures like `collaborative efficiency' shown for each group and also plotted.
+
+Find the top scoring student in each group,
+and the "super" score (max score across all students in the group, by question)
+
+
+```{r analyse-stages12}
+
+S12data_scored = data %>%
+  dplyr::select(Q,Stage1score,Stage2score,Student,Stage2group) %>%
+  mutate(
+    Group = Stage2group
+  ) %>%
+  dplyr::select(-Stage2group)
+
+S1superandtop = S12data_scored %>%
+  group_by(Group,Q) %>%
+  mutate(
+    superstudent = max(Stage1score)
+  ) %>%
+  group_by(Group,Student) %>%
+  mutate(
+    topstudent = sum(Stage1score)/n() # the Student's mean score on the n() Questions
+  ) %>%
+  group_by(Group) %>%
+  summarise(
+    superstudent = sum(superstudent)/n(),
+    topstudent = max(topstudent)
+  )
+
+
+LevyA = S12data_scored %>%
+  group_by(Student) %>%
+  summarise(
+    Stage1pc = sum(Stage1score)/n()
+  ) %>%
+  summarise(
+    S1mean = mean(Stage1pc),
+    S1sd = sd(Stage1pc),
+    S1n = n()
+  )
+
+
+LevyAsd =  LevyA$S1sd[[1]] 
+
+groupCorrectness = data %>%
+  group_by(Stage2group,Q) %>%
+  summarise(
+    GpSize = n(),
+    S1sum = sum(Stage1score),
+    S1avg = S1sum/GpSize,
+    S2 = max(Stage2score)
+  )
+
+LevyByGroup = groupCorrectness %>%
+  mutate(
+    Group = Stage2group
+  ) %>%
+  left_join(S1superandtop) %>%
+#  left_join(LevyA %>% select(S1sd)) %>%
+  group_by(Group) %>%
+  summarise(
+    n = max(GpSize),
+    IndivA = mean(S1avg),
+    GroupB = mean(S2,na.rm=TRUE),
+    TopC = max(topstudent),
+    SuperD = max(superstudent),
+    GainBA = (GroupB-IndivA)/LevyAsd,
+    TopSurplus = (TopC-IndivA)/LevyAsd,
+    SuperSurplus = (SuperD-IndivA)/LevyAsd,
+    CollabEfficiency = GainBA / na_if(SuperSurplus,0)
+  ) %>%
+  ungroup()
+
+LevyByGroup %>% knitr::kable(digits = 2)
+```
+
+```{r levy-plots}
+ggplot(stack(LevyByGroup %>% select(IndivA,GroupB,TopC,SuperD)), aes(x = ind, y = values)) +
+  geom_violin(fill=heathers[1]) +
+  geom_boxplot(width=0.2,color=heathers[2],lwd=1) +
+  geom_jitter(shape=16, position=position_jitter(0.2),alpha=0.5) +
+  labs(x = "Average score of...",
+       y = "Percentage correct") +
+  scale_y_continuous(labels = scales::percent)
+ggsave("Figs/Study3_LevyABCD.pdf",width=20,height=10,units="cm",dpi=300)
+ggsave("Figs/Study3_LevyABCD_small.pdf",width=10,height=7,units="cm",dpi=300)
+
+LevyByGroup %>% select(GainBA,TopSurplus,SuperSurplus,CollabEfficiency) %>%
+  filter(CollabEfficiency>4)
+
+
+ggplot(stack(LevyByGroup %>% select(GainBA,TopSurplus,SuperSurplus,CollabEfficiency) %>%
+               mutate(CollabEfficiency = ifelse(CollabEfficiency<4,CollabEfficiency,NA_real_))), aes(x = ind, y = values)) +
+  geom_violin(fill=heathers[1]) +
+  geom_boxplot(width=0.2,color=heathers[2],lwd=1) +
+  geom_jitter(shape=16, position=position_jitter(0.2),alpha=0.5) + 
+  labs(x = "Difference in average scores",
+       y = "Difference (in SDs)")+
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+ggsave("Figs/Study3_LevyDiffs.pdf",width=20,height=10,units="cm",dpi=300)
+ggsave("Figs/Study3_LevyDiffs_small.pdf",width=10,height=7,units="cm",dpi=300)
+
+
+LevyByGroup %>%
+  summarise(
+    CollabEfficiency_m = mean(CollabEfficiency, na.rm=TRUE),
+    CollabEfficiency_sd = sd(CollabEfficiency, na.rm=TRUE),
+    n=n()
+  ) %>% knitr::kable(digits = 2)
+
+LevyByGroup %>%
+  filter(CollabEfficiency>1) %>%
+  count()
+
+```
+
+
+# Bayesian analysis
+
+Here we look at (and compare) the proportions in the 4 experimental groups shown in Table 5 of the paper.
+
+Using model code for the Bayesian First Aid alternative to the test of proportions.
+```{r bayes}
+require(rjags)
+
+source("DBDA2E-utilities.R")
+source("DBDAderivatives.R")
+
+myData = S123data %>%
+  select(ZippGroup, Stage3score)
+
+
+myData = S123data %>%
+  select(ZippGroup, Stage3score) %>%
+  mutate(
+    ZippGroup = as.numeric(str_sub(ZippGroup,2,2))
+  )
+
+params = c(2,2)
+# The model string written in the JAGS language
+model_string <- paste0("model {
+for(i in 1:length(x)) {
+  x[i] ~ dbinom(theta[i], n[i])
+  theta[i] ~ dbeta(",params[1],", ",params[2],")
+  x_pred[i] ~ dbinom(theta[i], n[i])
+}
+}")
+
+# Running the model
+modelS3 <- jags.model(textConnection(model_string), data = list(x = zipptab$numcorrect, n = zipptab$numingroup), 
+                    n.chains = 3, n.adapt=1000)
+samplesS3 <- coda.samples(modelS3, c("theta", "x_pred"), n.iter=5000)
+
+```
+
+You can extract the mcmc samples as a matrix and compare the thetas 
+of the groups. For example, the following shows the median and 95%
+credible interval for the difference between Group 1 and Group 2.
+```{r compare-thetas}
+samp_mat <- as.matrix(samplesS3)
+print(quantile(samp_mat[, "theta[2]"] - samp_mat[, "theta[1]"], c(0.025, 0.5, 0.975)))
+print(quantile(samp_mat[, "theta[4]"] - samp_mat[, "theta[3]"], c(0.025, 0.5, 0.975)))
+
+diagMCMC(samplesS3, parName = "theta[1]", saveName="Figs/Study3_S3props", saveType = "pdf")
+diagMCMC(samplesS3, parName = "theta[2]", saveName="Figs/Study3_S3props", saveType = "pdf")
+diagMCMC(samplesS3, parName = "theta[3]", saveName="Figs/Study3_S3props", saveType = "pdf")
+diagMCMC(samplesS3, parName = "theta[4]", saveName="Figs/Study3_S3props", saveType = "pdf")
+
+
+```
+
+```{r mcmc-plot-s3props}
+plotMCMC( samplesS3, data=myData, yName="Stage3score", sName="ZippGroup", compVal=NULL, compValDiff=0.0,
+          saveName="Figs/Study3_S3props", saveType = "pdf")
+
+contrasts = list(
+  list( c(1,3), c(2,4), compVal=0.0, ROPE=c(-0.1,0.1)),
+  list( c(1,2), c(3,4), compVal=0.0, ROPE=c(-0.1,0.1))
+)
+plotMCMCwithContrasts( samplesS3, datFrm=data.frame(myData), yName="Stage3score", xName="ZippGroup", contrasts = contrasts,
+          saveName="Figs/Study3_S3props", saveType = "pdf")
+
+
+```
+
+# Experimental analysis
+
+This conducts the Bayesian analysis of the main experiment, i.e. comparing all 6 groups from Table 5.
+
+```{r expt-analysis-dataprep}
+
+myData = data %>%
+  dplyr::select(ZippGroup, Stage3score) %>%
+  drop_na() %>%
+  mutate(ZippGroup = fct_relevel(ZippGroup, "C0", after=Inf)) %>%
+  mutate(ZippGroup = fct_relevel(ZippGroup, "C1", after=Inf)) %>%
+  mutate(
+    ZippGroup = case_when(
+      ZippGroup=="C0" ~ 5,
+      ZippGroup=="C1" ~ 6,
+      TRUE ~ as.numeric(str_sub(ZippGroup,2,2))
+    )
+  )
+
+myData %>% group_by(ZippGroup) %>% summarise( mean(Stage3score)) %>% knitr::kable()
+```
+
+```{r zipp-tab-table5}
+zipptab = myData %>%
+  group_by(ZippGroup) %>%
+  summarise(
+    numcorrect = sum(Stage3score),
+    numingroup = n()
+  )
+zipptab %>% knitr::kable()
+```
+
+```{r expt-analysis}
+params = c(2,2)
+# The model string written in the JAGS language
+model_string <- paste0("model {
+                       for(i in 1:length(x)) {
+                       x[i] ~ dbinom(theta[i], n[i])
+                       theta[i] ~ dbeta(",params[1],", ",params[2],")
+                       x_pred[i] ~ dbinom(theta[i], n[i])
+                       }
+                       }")
+
+# Running the model
+modelEXPT <- jags.model(textConnection(model_string), data = list(x = zipptab$numcorrect, n = zipptab$numingroup), 
+                      n.chains = 3, n.adapt=1000)
+samplesEXPT <- coda.samples(modelEXPT, c("theta", "x_pred"), n.iter=5000)
+
+# Inspecting the posterior
+#plot(samples)
+#summary(samples)
+
+# You can extract the mcmc samples as a matrix and compare the thetas 
+# of the groups. For example, the following shows the median and 95%
+# credible interval for the difference between Group 1 and Group 2.
+samp_mat <- as.matrix(samplesEXPT)
+print(quantile(samp_mat[, "theta[2]"] - samp_mat[, "theta[1]"], c(0.025, 0.5, 0.975)))
+print(quantile(samp_mat[, "theta[4]"] - samp_mat[, "theta[3]"], c(0.025, 0.5, 0.975)))
+
+diagMCMC(samplesEXPT, parName = "theta[1]", saveName="Figs/Study3_EXPTprops", saveType = "pdf")
+diagMCMC(samplesEXPT, parName = "theta[2]", saveName="Figs/Study3_EXPTprops", saveType = "pdf")
+diagMCMC(samplesEXPT, parName = "theta[3]", saveName="Figs/Study3_EXPTprops", saveType = "pdf")
+diagMCMC(samplesEXPT, parName = "theta[4]", saveName="Figs/Study3_EXPTprops", saveType = "pdf")
+diagMCMC(samplesEXPT, parName = "theta[5]", saveName="Figs/Study3_EXPTprops", saveType = "pdf")
+diagMCMC(samplesEXPT, parName = "theta[6]", saveName="Figs/Study3_EXPTprops", saveType = "pdf")
+
+#plotPost( samplesS3[,"theta[1]"] , main="theta[1]" , xlab=bquote(theta[1]) )
+#plotPost( samplesS3[,"theta[2]"] , main="theta[2]" , xlab=bquote(theta[2]) )
+#plotPost( samplesS3[,"theta[3]"] , main="theta[3]" , xlab=bquote(theta[3]) )
+#plotPost( samplesS3[,"theta[4]"] , main="theta[4]" , xlab=bquote(theta[4]) )
+
+plotMCMC( samplesEXPT, data=myData, yName="Stage3score", sName="ZippGroup", compVal=NULL, compValDiff=0.0,
+          saveName="Figs/Study3_EXPTprops", saveType = "pdf")
+
+contrasts = list(
+  list( c(1,3), c(2,4), compVal=0.0, ROPE=c(-0.1,0.1)),
+  list( c(1,2), c(3,4), compVal=0.0, ROPE=c(-0.1,0.1)),
+  list( c(1,2,3,4), c(5,6), compVal=0.0, ROPE=c(-0.1,0.1)),
+  list( c(1,2), c(5), compVal=0.0, ROPE=c(-0.1,0.1)),
+  list( c(3,4), c(6), compVal=0.0, ROPE=c(-0.1,0.1))
+)
+
+plotMCMCwithContrasts( samplesEXPT, datFrm=data.frame(myData), yName="Stage3score", xName="ZippGroup", contrasts = contrasts,
+                       saveName="Figs/Study3_EXPTprops", saveType = "pdf")
+
+```
