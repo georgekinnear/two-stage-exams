@@ -5,4 +5,4 @@ Data and code for research on two-stage exams in the publication:
 
 Cite this data:
 
-https://zenodo.org/badge/DOI/10.5281/zenodo.4683713.svg
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.4683713.svg)](https://doi.org/10.5281/zenodo.4683713)
